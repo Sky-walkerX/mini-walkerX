@@ -11,7 +11,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "probot run ./build/index.js",
-    "build": "prisma generate && prisma db push && tsc",
+    "build": "prisma generate && tsc",
+    "db:push": "prisma db push",
     "dev": "tsx ./src/index.ts"
   },
   "keywords": [],
