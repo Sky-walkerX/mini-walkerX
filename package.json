@@ -11,19 +11,19 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "probot run ./build/index.js",
-    "build": "prisma generate && tsc",
+    "build": "prisma generate && prisma db push && tsc",
     "dev": "tsx ./src/index.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@libsql/client": "^0.17.2",
-    "@prisma/adapter-libsql": "^7.7.0",
+    "@prisma/adapter-pg": "^7.7.0",
     "@prisma/client": "^7.7.0",
     "@types/node": "^25.5.2",
     "@types/node-cron": "^3.0.11",
     "node-cron": "^4.2.1",
+    "pg": "^8.20.0",
     "prisma": "^7.7.0",
     "probot": "^14.3.2",
     "typescript": "^6.0.2"
