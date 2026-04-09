@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id        Int          @id @default(autoincrement())
+  username  String       @unique
+  // Relations
+  assignments Assignment[]
+  waitlists   Waitlist[]
+}
+
+model Assignment {
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  user            User      @relation(fields: [userId], references: [id])
+  repoOwner       String
+  repoName        String
+  issueNumber     Int
+  assignedAt      DateTime  @default(now())
+  deadline        DateTime? // null if repo has multi-PR allowed
+  status          String    @default("ACTIVE") // ACTIVE, CLOSED, TIMED_OUT, UNASSIGNED
+
+  @@unique([repoOwner, repoName, issueNumber, status]) // Ensure only one ACTIVE assignment per issue
+}
+
+model Waitlist {
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  user            User      @relation(fields: [userId], references: [id])
+  repoOwner       String
+  repoName        String
+  issueNumber     Int
+  createdAt       DateTime  @default(now())
+}

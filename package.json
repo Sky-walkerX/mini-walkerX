@@ -1,0 +1,35 @@
+{
+  "name": "assign-bot",
+  "version": "1.0.0",
+  "description": "GitHub issue assignment bot built with Probot",
+  "homepage": "http://localhost:3001/probot",
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "probot run ./build/index.js",
+    "build": "prisma generate && tsc",
+    "dev": "tsx ./src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@libsql/client": "^0.17.2",
+    "@prisma/adapter-libsql": "^7.7.0",
+    "@prisma/client": "^7.7.0",
+    "@types/node": "^25.5.2",
+    "@types/node-cron": "^3.0.11",
+    "node-cron": "^4.2.1",
+    "prisma": "^7.7.0",
+    "probot": "^14.3.2",
+    "typescript": "^6.0.2"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "tsx": "^4.20.6"
+  }
+}
