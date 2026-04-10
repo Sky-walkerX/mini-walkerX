@@ -34,7 +34,9 @@ export default (app: Probot) => {
     const repoName = context.payload.repository.name;
     const issueNumber = issue.number;
 
-    await prisma.assignment.updateMany({
+    app.log.info(`Issue #${issueNumber} closed on ${repoOwner}/${repoName}`);
+
+    const result = await prisma.assignment.updateMany({
       where: {
         repoOwner,
         repoName,
@@ -43,5 +45,7 @@ export default (app: Probot) => {
       },
       data: { status: "CLOSED" },
     });
+
+    app.log.info(`Marked ${result.count} assignment(s) as CLOSED`);
   });
 };

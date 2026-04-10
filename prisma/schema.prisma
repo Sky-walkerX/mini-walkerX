@@ -25,7 +25,7 @@ model Assignment {
   deadline        DateTime? // null if repo has multi-PR allowed
   status          String    @default("ACTIVE") // ACTIVE, CLOSED, TIMED_OUT, UNASSIGNED
 
-  @@unique([repoOwner, repoName, issueNumber, status]) // Ensure only one ACTIVE assignment per issue
+  @@index([repoOwner, repoName, issueNumber])
 }
 
 model Waitlist {
