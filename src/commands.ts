@@ -44,15 +44,18 @@ interface AppConfig {
   label_limits?: Record<string, number>; // e.g. { easy: 1, medium: 1 }
 }
 
-function getSanitizedLabelLimits(config: AppConfig | null): Record<string, number> {
-  const raw = config?.label_limits;
+function sanitizeLabelLimits(raw: unknown): Record<string, number> {
   if (!raw || typeof raw !== "object") return {};
 
-  const allowedGroups = new Set(["easy", "medium", "hard"]);
+  const allowedLimitKeys = new Set([
+    ...Object.keys(TIME_LIMITS),
+    ...Object.values(LABEL_GROUP),
+  ]);
   const sanitized: Record<string, number> = {};
 
-  for (const [group, value] of Object.entries(raw)) {
-    if (!allowedGroups.has(group)) continue;
+  for (const [groupRaw, value] of Object.entries(raw as Record<string, unknown>)) {
+    const group = normalizeLabel(groupRaw);
+    if (!allowedLimitKeys.has(group)) continue;
     const n = Number(value);
     if (Number.isFinite(n) && n >= 0) {
       sanitized[group] = Math.floor(n);
@@ -60,6 +63,60 @@ function getSanitizedLabelLimits(config: AppConfig | null): Record<string, numbe
   }
 
   return sanitized;
+}
+
+function parseJsonObject(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+// Optional app-level defaults across all repos.
+// Example: DEFAULT_LABEL_LIMITS_JSON={"easy":2,"medium":1,"hard":1}
+function getDefaultGlobalLabelLimits(): Record<string, number> {
+  return sanitizeLabelLimits(parseJsonObject(process.env.DEFAULT_LABEL_LIMITS_JSON));
+}
+
+// Optional org-specific limits map.
+// Example: ORG_LABEL_LIMITS_JSON={"iiitl":{"easy":2,"medium":1},"Sky-walkerX":{"easy":1}}
+function getOrgGlobalLabelLimits(repoOwner: string): Record<string, number> {
+  const orgMap = parseJsonObject(process.env.ORG_LABEL_LIMITS_JSON);
+  const ownerEntry = orgMap[repoOwner] ?? orgMap[repoOwner.toLowerCase()];
+  return sanitizeLabelLimits(ownerEntry);
+}
+
+function getEffectiveLabelLimits(config: AppConfig | null, repoOwner: string): Record<string, number> {
+  const defaults = getDefaultGlobalLabelLimits();
+  const orgLimits = getOrgGlobalLabelLimits(repoOwner);
+  const repoLimits = sanitizeLabelLimits(config?.label_limits);
+  return { ...defaults, ...orgLimits, ...repoLimits };
+}
+
+function getLimitRule(
+  matchedLabel: string,
+  labelGroup: string,
+  labelLimits: Record<string, number>
+): { key: string; limit: number; labelsToCount: string[] } | null {
+  // Prefer exact label limit if provided (e.g. "very easy": 3)
+  const exactLimit = labelLimits[matchedLabel];
+  if (exactLimit !== undefined) {
+    return { key: matchedLabel, limit: exactLimit, labelsToCount: [matchedLabel] };
+  }
+
+  // Fallback to group limit (e.g. "easy": 3)
+  const groupLimit = labelLimits[labelGroup];
+  if (groupLimit !== undefined) {
+    const labelsInGroup = Object.entries(LABEL_GROUP)
+      .filter(([, group]) => group === labelGroup)
+      .map(([label]) => label);
+    return { key: labelGroup, limit: groupLimit, labelsToCount: labelsInGroup };
+  }
+
+  return null;
 }
 
 export async function handleAssign(context: Context<"issue_comment.created">) {
@@ -73,7 +130,7 @@ export async function handleAssign(context: Context<"issue_comment.created">) {
   // 1. Fetch config
   const config = (await context.config("assign-bot.yml")) as AppConfig | null;
   const multiplePrAllowed = config?.multiple_pr ?? false;
-  const labelLimits = getSanitizedLabelLimits(config);
+  const labelLimits = getEffectiveLabelLimits(config, repoOwner);
 
   // 2. Resolve difficulty label from issue labels (needed for deadline + per-label limit)
   //    Normalize hyphens → spaces so "very-easy" matches "very easy", etc.
@@ -103,23 +160,21 @@ export async function handleAssign(context: Context<"issue_comment.created">) {
     return;
   }
 
-  // 5. Check per-label limit (if configured for this label group)
-  if (labelGroup && labelLimits[labelGroup] !== undefined) {
-    const limit = labelLimits[labelGroup];
-    // Count ACTIVE assignments whose stored label maps to the same group
-    const labelsInGroup = Object.entries(LABEL_GROUP)
-      .filter(([, group]) => group === labelGroup)
-      .map(([label]) => label);
+  // 5. Check per-label limit (exact label first, then group fallback)
+  if (matchedLabel && labelGroup) {
+    const limitRule = getLimitRule(matchedLabel, labelGroup, labelLimits);
+    if (limitRule) {
     const labelCount = await prisma.assignment.count({
-      where: { userId: user.id, status: "ACTIVE", difficultyLabel: { in: labelsInGroup } },
+      where: { userId: user.id, status: "ACTIVE", difficultyLabel: { in: limitRule.labelsToCount } },
     });
-    if (labelCount >= limit) {
-      await context.octokit.rest.issues.createComment(
-        context.issue({
-          body: `@${username} You have reached the limit of **${limit}** active **${labelGroup}** issue(s). Please complete one before taking another.`,
-        })
-      );
-      return;
+      if (labelCount >= limitRule.limit) {
+        await context.octokit.rest.issues.createComment(
+          context.issue({
+            body: `@${username} You have reached the limit of **${limitRule.limit}** active **${limitRule.key}** issue(s). Please complete one before taking another.`,
+          })
+        );
+        return;
+      }
     }
   }
 

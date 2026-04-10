@@ -142,6 +142,30 @@ When a contributor tries to `/assign` an issue whose label group has reached the
 
 Issues **without** a difficulty label are not subject to per-label limits (only the global 2-issue cap applies).
 
+### Global Org-Level Limits (No Per-Repo File Needed)
+
+You can configure label limits globally from app environment variables so all repos in an org share one policy.
+
+| Variable | Example | Meaning |
+|---|---|---|
+| `DEFAULT_LABEL_LIMITS_JSON` | `{"easy":2,"medium":1,"hard":1}` | Base limits for all repos/orgs |
+| `ORG_LABEL_LIMITS_JSON` | `{"iiitl":{"easy":2,"medium":1,"hard":1}}` | Per-org overrides keyed by owner login |
+
+Heroku example:
+
+```bash
+heroku config:set DEFAULT_LABEL_LIMITS_JSON='{"easy":2,"medium":1,"hard":1}' --app <your-app>
+heroku config:set ORG_LABEL_LIMITS_JSON='{"iiitl":{"easy":2,"medium":1,"hard":1}}' --app <your-app>
+```
+
+Precedence used by the bot:
+
+1. `DEFAULT_LABEL_LIMITS_JSON`
+2. `ORG_LABEL_LIMITS_JSON` for the repo owner
+3. `.github/assign-bot.yml` `label_limits` (if present, this overrides global values)
+
+If you don't want repo-level control, simply do not define `label_limits` in repo config files.
+
 ---
 
 ## Automatic Expiry
