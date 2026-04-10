@@ -6,6 +6,7 @@ A GitHub App built with [Probot](https://github.com/probot/probot) that manages 
 
 - **Slash-command driven** — contributors self-assign via issue comments
 - **Label-based time limits** — deadline is set automatically based on difficulty labels
+- **Label-sync aware** — if issue labels change later, active assignment difficulty is synced in DB
 - **Global 2-issue limit** — no contributor can hold more than 2 active assignments across all repos
 - **Auto-expiry** — a cron job runs every 10 minutes and unassigns timed-out contributors
 - **Maintainer deadline extension** — collaborators with write/maintain/admin access can extend deadlines
@@ -108,6 +109,38 @@ When `multiple_pr: true`:
 - The `/extend` command has no effect.
 - The auto-expiry scheduler skips assignments without a deadline.
 - The confirmation comment will say "No time limit will be enforced."
+
+---
+
+## Per-Label Limits
+
+In addition to the global 2-issue cap, you can restrict how many issues of each difficulty **group** a contributor can hold at the same time.
+
+Labels are consolidated into three groups:
+
+| Group | Labels |
+|---|---|
+| `easy` | `basic`, `very easy`, `easy` |
+| `medium` | `medium` |
+| `hard` | `hard`, `very hard`, `exceptionally hard` |
+
+> Labels with hyphens (e.g., `very-easy`) are normalised automatically.
+
+### Setup
+
+Add `label_limits` to `.github/assign-bot.yml`:
+
+```yaml
+# .github/assign-bot.yml
+label_limits:
+  easy: 1    # at most 1 active easy-group issue per contributor
+  medium: 1  # at most 1 active medium issue per contributor
+  # hard: omitted → no per-label limit for hard issues
+```
+
+When a contributor tries to `/assign` an issue whose label group has reached the configured limit, the bot will post a comment explaining the limit and refuse the assignment.
+
+Issues **without** a difficulty label are not subject to per-label limits (only the global 2-issue cap applies).
 
 ---
 

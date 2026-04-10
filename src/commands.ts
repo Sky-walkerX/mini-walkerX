@@ -14,8 +14,52 @@ const TIME_LIMITS: Record<string, number> = {
 
 const DEFAULT_TIME_LIMIT = 3;
 
+function normalizeLabel(label: string): string {
+  return label.toLowerCase().replace(/-/g, " ").trim();
+}
+
+export function resolveDifficultyLabelFromNames(labelNames: string[]): string | null {
+  for (const rawLabel of labelNames) {
+    const label = normalizeLabel(rawLabel);
+    if (TIME_LIMITS[label] !== undefined) {
+      return label;
+    }
+  }
+  return null;
+}
+
+// Label groups for consolidating similar labels under one limit key
+const LABEL_GROUP: Record<string, string> = {
+  "basic":    "easy",
+  "very easy": "easy",
+  "easy":     "easy",
+  "medium":   "medium",
+  "hard":     "hard",
+  "very hard": "hard",
+  "exceptionally hard": "hard",
+};
+
 interface AppConfig {
   multiple_pr?: boolean;
+  label_limits?: Record<string, number>; // e.g. { easy: 1, medium: 1 }
+}
+
+function getSanitizedLabelLimits(config: AppConfig | null): Record<string, number> {
+  const raw = config?.label_limits;
+  if (!raw || typeof raw !== "object") return {};
+
+  const allowedGroups = new Set(["easy", "medium", "hard"]);
+  const sanitized: Record<string, number> = {};
+
+  for (const [group, value] of Object.entries(raw)) {
+    if (!allowedGroups.has(group)) continue;
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) {
+      sanitized[group] = Math.floor(n);
+    }
+  }
+
+  return sanitized;
 }
 
 export async function handleAssign(context: Context<"issue_comment.created">) {
@@ -26,18 +70,26 @@ export async function handleAssign(context: Context<"issue_comment.created">) {
   const repoName = context.payload.repository.name;
   const issueNumber = issue.number;
 
-  // 1. Fetch config to check if multi_pr is enabled
+  // 1. Fetch config
   const config = (await context.config("assign-bot.yml")) as AppConfig | null;
   const multiplePrAllowed = config?.multiple_pr ?? false;
+  const labelLimits = getSanitizedLabelLimits(config);
 
-  // 2. Ensure user exists
+  // 2. Resolve difficulty label from issue labels (needed for deadline + per-label limit)
+  //    Normalize hyphens → spaces so "very-easy" matches "very easy", etc.
+  const issueLabels = issue.labels.map((l: any) => l.name);
+  const matchedLabel = resolveDifficultyLabelFromNames(issueLabels);
+  // Map to canonical group (e.g. "basic" → "easy") for limit checking
+  const labelGroup = matchedLabel ? (LABEL_GROUP[matchedLabel] ?? matchedLabel) : null;
+
+  // 3. Ensure user exists
   const user = await prisma.user.upsert({
     where: { username },
     update: {},
     create: { username },
   });
 
-  // 3. Check global 2-issue limit
+  // 4. Check global 2-issue limit
   const activeAssignments = await prisma.assignment.count({
     where: { userId: user.id, status: "ACTIVE" },
   });
@@ -51,7 +103,27 @@ export async function handleAssign(context: Context<"issue_comment.created">) {
     return;
   }
 
-  // 4. Check if issue is already assigned
+  // 5. Check per-label limit (if configured for this label group)
+  if (labelGroup && labelLimits[labelGroup] !== undefined) {
+    const limit = labelLimits[labelGroup];
+    // Count ACTIVE assignments whose stored label maps to the same group
+    const labelsInGroup = Object.entries(LABEL_GROUP)
+      .filter(([, group]) => group === labelGroup)
+      .map(([label]) => label);
+    const labelCount = await prisma.assignment.count({
+      where: { userId: user.id, status: "ACTIVE", difficultyLabel: { in: labelsInGroup } },
+    });
+    if (labelCount >= limit) {
+      await context.octokit.rest.issues.createComment(
+        context.issue({
+          body: `@${username} You have reached the limit of **${limit}** active **${labelGroup}** issue(s). Please complete one before taking another.`,
+        })
+      );
+      return;
+    }
+  }
+
+  // 6. Check if issue is already assigned
   const existingAssignment = await prisma.assignment.findFirst({
     where: { repoOwner, repoName, issueNumber, status: "ACTIVE" },
   });
@@ -65,38 +137,29 @@ export async function handleAssign(context: Context<"issue_comment.created">) {
         await context.octokit.rest.issues.createComment(
             context.issue({ body: `@${username} This issue is already assigned to someone else. Let me add you to the waitlist (Waitlist feature TBD).` })
           );
-          // Waitlist logic to be added
     }
     return;
   }
 
-  // 5. Calculate deadline based on labels (unless multiple PRs allowed)
+  // 7. Calculate deadline based on matched label (unless multiple PRs allowed)
   let deadline: Date | null = null;
   let deadlineMsg = "No time limit will be enforced.";
 
   if (!multiplePrAllowed) {
-    let hours = DEFAULT_TIME_LIMIT;
-    const labels = issue.labels.map((l: any) => l.name.toLowerCase());
-    
-    for (const label of labels) {
-      if (TIME_LIMITS[label]) {
-        hours = TIME_LIMITS[label];
-        break; // Stop at first matched label
-      }
-    }
+    const hours = (matchedLabel ? TIME_LIMITS[matchedLabel] : undefined) ?? DEFAULT_TIME_LIMIT;
 
     deadline = new Date();
     deadline.setHours(deadline.getHours() + hours);
     deadlineMsg = `You have ${hours} hours to complete this issue (Deadline: ${deadline.toUTCString()}).`;
   }
 
-  // 6. Apply assignment via GitHub API
+  // 8. Apply assignment via GitHub API
   try {
     await context.octokit.rest.issues.addAssignees(
       context.issue({ assignees: [username] })
     );
 
-    // 7. Save to DB
+    // 9. Save to DB (store matched label so future limit checks can query by it)
     await prisma.assignment.create({
       data: {
         userId: user.id,
@@ -105,6 +168,7 @@ export async function handleAssign(context: Context<"issue_comment.created">) {
         issueNumber,
         deadline,
         status: "ACTIVE",
+        difficultyLabel: matchedLabel,
       },
     });
 

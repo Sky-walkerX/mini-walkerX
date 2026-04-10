@@ -1,6 +1,11 @@
 import { Probot } from "probot";
 import { setupScheduler } from "./scheduler.js";
-import { handleAssign, handleUnassign, handleExtend } from "./commands.js";
+import {
+  handleAssign,
+  handleUnassign,
+  handleExtend,
+  resolveDifficultyLabelFromNames,
+} from "./commands.js";
 import { prisma } from "./db.js";
 
 export default (app: Probot) => {
@@ -47,5 +52,32 @@ export default (app: Probot) => {
     });
 
     app.log.info(`Marked ${result.count} assignment(s) as CLOSED`);
+  });
+
+  // Keep difficultyLabel synced when issue labels change after assignment
+  app.on(["issues.labeled", "issues.unlabeled"], async (context) => {
+    const issue = context.payload.issue;
+    if ((issue as any).pull_request) return;
+
+    const repoOwner = context.payload.repository.owner.login;
+    const repoName = context.payload.repository.name;
+    const issueNumber = issue.number;
+
+    const labelNames = (issue.labels ?? []).map((l: any) => l.name);
+    const difficultyLabel = resolveDifficultyLabelFromNames(labelNames);
+
+    const result = await prisma.assignment.updateMany({
+      where: {
+        repoOwner,
+        repoName,
+        issueNumber,
+        status: "ACTIVE",
+      },
+      data: { difficultyLabel },
+    });
+
+    app.log.info(
+      `Synced difficultyLabel=${difficultyLabel ?? "null"} for ${result.count} ACTIVE assignment(s) on ${repoOwner}/${repoName}#${issueNumber}`
+    );
   });
 };
