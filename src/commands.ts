@@ -160,14 +160,14 @@ export async function handleAssign(context: Context<"issue_comment.created">) {
     return;
   }
 
-  // 5. Check per-label limit (total across all statuses except UNASSIGNED)
+  // 5. Check per-label limit (ACTIVE + CLOSED count toward limit; TIMED_OUT and UNASSIGNED do not)
   if (matchedLabel && labelGroup) {
     const limitRule = getLimitRule(matchedLabel, labelGroup, labelLimits);
     if (limitRule) {
       const labelCount = await prisma.assignment.count({
         where: {
           userId: user.id,
-          status: { not: "UNASSIGNED" },
+          status: { in: ["ACTIVE", "CLOSED"] },
           difficultyLabel: { in: limitRule.labelsToCount },
         },
       });
