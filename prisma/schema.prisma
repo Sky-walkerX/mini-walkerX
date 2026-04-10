@@ -25,6 +25,7 @@ model Assignment {
   deadline        DateTime? // null if repo has multi-PR allowed
   status          String    @default("ACTIVE") // ACTIVE, CLOSED, TIMED_OUT, UNASSIGNED
   difficultyLabel String?   // matched label at time of assignment (e.g. "easy", "medium")
+  linkedPrNumber  Int?      // PR number linked to this assignment (non-null = PR is open)
 
   @@index([repoOwner, repoName, issueNumber])
 }

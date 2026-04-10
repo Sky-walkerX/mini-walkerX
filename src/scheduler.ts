@@ -10,9 +10,11 @@ export function setupScheduler(app: Probot) {
     const now = new Date();
     
     // Find all active assignments that have passed their deadline
+    // but do NOT have an open PR linked (linkedPrNumber pauses timeout)
     const expiredAssignments = await prisma.assignment.findMany({
       where: {
         status: "ACTIVE",
+        linkedPrNumber: null,
         deadline: {
           lt: now,
         },

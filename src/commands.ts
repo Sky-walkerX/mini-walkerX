@@ -39,7 +39,7 @@ const LABEL_GROUP: Record<string, string> = {
   "exceptionally hard": "hard",
 };
 
-interface AppConfig {
+export interface AppConfig {
   multiple_pr?: boolean;
   label_limits?: Record<string, number>; // e.g. { easy: 1, medium: 1 }
 }
@@ -89,7 +89,7 @@ function getOrgGlobalLabelLimits(repoOwner: string): Record<string, number> {
   return sanitizeLabelLimits(ownerEntry);
 }
 
-function getEffectiveLabelLimits(config: AppConfig | null, repoOwner: string): Record<string, number> {
+export function getEffectiveLabelLimits(config: AppConfig | null, repoOwner: string): Record<string, number> {
   const defaults = getDefaultGlobalLabelLimits();
   const orgLimits = getOrgGlobalLabelLimits(repoOwner);
   const repoLimits = sanitizeLabelLimits(config?.label_limits);
@@ -130,6 +130,17 @@ export async function handleAssign(context: Context<"issue_comment.created">) {
   // 1. Fetch config
   const config = (await context.config("assign-bot.yml")) as AppConfig | null;
   const multiplePrAllowed = config?.multiple_pr ?? false;
+
+  // If multiple_pr mode, /assign is not needed
+  if (multiplePrAllowed) {
+    await context.octokit.rest.issues.createComment(
+      context.issue({
+        body: `@${username} Multiple PRs are allowed for this repo — no assignment needed. Just open a PR directly!`,
+      })
+    );
+    return;
+  }
+
   const labelLimits = getEffectiveLabelLimits(config, repoOwner);
 
   // 2. Resolve difficulty label from issue labels (needed for deadline + per-label limit)
@@ -200,17 +211,13 @@ export async function handleAssign(context: Context<"issue_comment.created">) {
     return;
   }
 
-  // 7. Calculate deadline based on matched label (unless multiple PRs allowed)
+  // 7. Calculate deadline based on matched label
   let deadline: Date | null = null;
-  let deadlineMsg = "No time limit will be enforced.";
+  const hours = (matchedLabel ? TIME_LIMITS[matchedLabel] : undefined) ?? DEFAULT_TIME_LIMIT;
 
-  if (!multiplePrAllowed) {
-    const hours = (matchedLabel ? TIME_LIMITS[matchedLabel] : undefined) ?? DEFAULT_TIME_LIMIT;
-
-    deadline = new Date();
-    deadline.setHours(deadline.getHours() + hours);
-    deadlineMsg = `You have ${hours} hours to complete this issue (Deadline: ${deadline.toUTCString()}).`;
-  }
+  deadline = new Date();
+  deadline.setHours(deadline.getHours() + hours);
+  const deadlineMsg = `You have ${hours} hours to complete this issue (Deadline: ${deadline.toUTCString()}).`;
 
   // 8. Apply assignment via GitHub API
   try {
@@ -334,4 +341,26 @@ export async function handleExtend(context: Context<"issue_comment.created">) {
       body: `✅ Deadline extended by ${hoursToAdd} hours! New deadline: ${newDeadline.toUTCString()}`,
     })
   );
+}
+
+/**
+ * Parse "Fixes #N", "Closes #N", "Resolves #N" (and cross-repo variants) from text.
+ * Returns issue numbers that belong to the given owner/repo.
+ */
+export function parseIssueRefs(
+  text: string,
+  repoOwner: string,
+  repoName: string
+): number[] {
+  const pattern = /(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s+(?:([a-z0-9_.-]+)\/([a-z0-9_.-]+))?#(\d+)/gi;
+  const issueNumbers: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(text)) !== null) {
+    const owner = m[1] || repoOwner;
+    const repo = m[2] || repoName;
+    if (owner.toLowerCase() === repoOwner.toLowerCase() && repo.toLowerCase() === repoName.toLowerCase()) {
+      issueNumbers.push(parseInt(m[3]!, 10));
+    }
+  }
+  return [...new Set(issueNumbers)];
 }
