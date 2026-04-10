@@ -160,17 +160,21 @@ export async function handleAssign(context: Context<"issue_comment.created">) {
     return;
   }
 
-  // 5. Check per-label limit (exact label first, then group fallback)
+  // 5. Check per-label limit (total across all statuses except UNASSIGNED)
   if (matchedLabel && labelGroup) {
     const limitRule = getLimitRule(matchedLabel, labelGroup, labelLimits);
     if (limitRule) {
-    const labelCount = await prisma.assignment.count({
-      where: { userId: user.id, status: "ACTIVE", difficultyLabel: { in: limitRule.labelsToCount } },
-    });
+      const labelCount = await prisma.assignment.count({
+        where: {
+          userId: user.id,
+          status: { not: "UNASSIGNED" },
+          difficultyLabel: { in: limitRule.labelsToCount },
+        },
+      });
       if (labelCount >= limitRule.limit) {
         await context.octokit.rest.issues.createComment(
           context.issue({
-            body: `@${username} You have reached the limit of **${limitRule.limit}** active **${limitRule.key}** issue(s). Please complete one before taking another.`,
+            body: `@${username} You have reached the limit of **${limitRule.limit}** **${limitRule.key}** issue(s). Please pick a different difficulty.`,
           })
         );
         return;
